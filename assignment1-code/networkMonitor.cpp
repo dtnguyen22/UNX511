@@ -17,7 +17,7 @@ static void signalHandler(int signum);
 using namespace std;
 
 char socket_path[] = "/tmp/assignment1";
-const int BUF_LEN = 100;
+const int BUF_LEN = 512;
 const int MAX_CLIENTS = 2;
 bool is_running;
 
@@ -153,14 +153,19 @@ int main(int argc, char *argv[])
                         memset(buf, 0, sizeof(buf));//clean buf
                         ret = read(cl[i], buf, BUF_LEN); //Read the data from that client
                         if(strcmp(buf, "Monitoring") == 0){ //0 means they are equal
-                            cout << "Monitoring status received" << endl;
+                            cout << "Monitoring status received" << endl;                          
+                        }
+                        if(strcmp(buf, "Link Down") == 0){
+                            cout << "Link Down status received" << endl;
+                            memset(buf, 0, sizeof(buf));//clean buf
+                            len = sprintf(buf, "%s", "Set Link Up"); 
+                            ret = write(cl[i], buf, BUF_LEN);
                         }
                         if (ret == -1)
                         {
-                            cout << "server: Read Error" << endl;
+                            cout << "server: Read/Write Error" << endl;
                             cout << strerror(errno) << endl;
                         }
-                        // cout << "server: read(sock:" << cl[i] << ", buf:" << buf << ")" << endl;
                     }
                 }
             }

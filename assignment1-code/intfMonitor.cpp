@@ -10,10 +10,11 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-
+#include "Interface.h"
 //print interface stats
-void printInterfaceStats(const char interface[]);
 static void signalHandler(int sig);
+void setInterfaceUp(string interfaceName, int sockfd);
+
 
 using namespace std;
 
@@ -67,154 +68,58 @@ int main(int argc, char *argv[])
     ret = write(fd, buf, BUF_LEN);
     if (ret > 0)
     {
-        cout <<getpid()<<" intfMonitor: ready is sent" << endl;
+        cout << getpid() << " intfMonitor: ready is sent" << endl;
     }
-    memset(buf, 0, sizeof(buf));//clean buf
+    memset(buf, 0, sizeof(buf)); //clean buf
     ret = read(fd, buf, BUF_LEN);
     if (strcmp(buf, "Monitor") == 0)
     {
+        memset(buf, 0, sizeof(buf));            //clean buf
+        len = sprintf(buf, "%s", "Monitoring"); //tell networkMonitor its ready to print stats
+        write(fd, buf, BUF_LEN);
+        isRunning = true;
+        if (ret > 0)
+        {
+            cout << getpid() << " intfMonitor: Monitoring is sent" << endl;
+        }
+        /////////////////////////////////////
+        //non blocking using timeout
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+        ///////////////////////////
+
+        Interface interfaceObject; //contains interface information
         while (isRunning)
         {
-            memset(buf, 0, sizeof(buf));            //clean buf
-            len = sprintf(buf, "%s", "Monitoring"); //tell networkMonitor its ready to print stats
-            write(fd, buf, BUF_LEN);
-            //print stats
-            if (ret > 0)
+            //prints interface stats
+            interfaceObject.printInterfaceStats(interface);
+            //checks if interface is down
+            if (interfaceObject.operstate.compare("down") == 0)
             {
-                cout <<getpid()<< " intfMonitor: Monitoring is sent" << endl;
+                memset(buf, 0, sizeof(buf));           //clean buf
+                len = sprintf(buf, "%s", "Link Down"); //send to network
+                ret = write(fd, buf, BUF_LEN);
+                if (ret > 0)
+                {
+                    cout << getpid() << " intfMonitor: Link Down is sent" << endl;
+                }
+                //checks if the server asks intfMonitor to turn it up
+                memset(buf, 0, sizeof(buf)); //clean buf
+                ret = read(fd, buf, BUF_LEN);
+                if (strcmp(buf, "Set Link Up") == 0)
+                { //xecute an IOCTL command to set the link back up
+                    cout << "intfMonitor: Set Link Up is received" << endl;
+                    setInterfaceUp(interface, fd);
+                }
             }
-            printInterfaceStats(interface); //this func is a loop
-        }                                   //0 means they are equal
-    }
-    if (strcpy(buf, "Set Link Up") == 0)
-    { //xecute an IOCTL command to set the link back up
+        }
     }
 
     cout << "intfMonitor: close(fd) before exitting" << endl;
     close(fd);
     return 0;
-}
-
-//print interface stats
-void printInterfaceStats(const char interface[])
-{
-    char statPath[2 * BUF_LEN];
-
-    string operstate;           //the operating state
-    int carrier_up_count = 0;   //no of times the intf has been up
-    int carrier_down_count = 0; //no of times the intf has been down
-    int rx_bytes = 0;           //no of received bytes
-    int rx_dropped = 0;         //no of dropped received bytes
-    int rx_errors = 0;          //no of erroneous received bytes
-    int rx_packets = 0;         //no of received packets
-    int tx_bytes = 0;           //no of transmitted bytes
-    int tx_dropped = 0;         //no of dropped transmitted bytes
-    int tx_errors = 0;          //no of erroneous transmitted bytes
-    int tx_packets = 0;         //no of transmitted packets
-                                /////////////////////////////////////////////////////////////////
-
-    ifstream infile;
-
-    //operate state
-    sprintf(statPath, "/sys/class/net/%s/operstate", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> operstate;
-        infile.close();
-    }
-
-    //carrier up count
-    sprintf(statPath, "/sys/class/net/%s/carrier_up_count", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> carrier_up_count;
-        infile.close();
-    }
-
-    //carrier down count
-    sprintf(statPath, "/sys/class/net/%s/carrier_down_count", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> carrier_down_count;
-        infile.close();
-    }
-
-    //no of received bytes
-    sprintf(statPath, "/sys/class/net/%s/statistics/rx_bytes", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> rx_bytes;
-        infile.close();
-    }
-
-    //no of erroneous received bytes
-    sprintf(statPath, "/sys/class/net/%s/statistics/rx_dropped", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> rx_dropped;
-        infile.close();
-    }
-
-    //no of erroneous received bytes
-    sprintf(statPath, "/sys/class/net/%s/statistics/rx_errors", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> rx_errors;
-        infile.close();
-    }
-
-    //no of received packets
-    sprintf(statPath, "/sys/class/net/%s/statistics/rx_packets", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> rx_packets;
-        infile.close();
-    }
-    //no of transmitted bytes
-    sprintf(statPath, "/sys/class/net/%s/statistics/tx_bytes", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> tx_bytes;
-        infile.close();
-    }
-    //no of dropped transmitted bytes
-    sprintf(statPath, "/sys/class/net/%s/statistics/tx_dropped", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> tx_dropped;
-        infile.close();
-    }
-    //no of erroneous transmitted bytes
-    sprintf(statPath, "/sys/class/net/%s/statistics/tx_errors", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> tx_errors;
-        infile.close();
-    }
-    //no of transmitted packets
-    sprintf(statPath, "/sys/class/net/%s/statistics/tx_packets", interface);
-    infile.open(statPath);
-    if (infile.is_open())
-    {
-        infile >> tx_packets;
-        infile.close();
-    }
-
-    cout << " Interface: " << interface << " state: " << operstate << " up_count: " << carrier_up_count << " down_count: " << carrier_down_count << endl;
-    cout << " rx_bytes: " << rx_bytes << " rx_dropped: " << rx_dropped << " rx_errors: " << rx_errors << " rx_packets: " << rx_packets << endl;
-    cout << " tx_bytes: " << tx_bytes << " tx_dropped: " << tx_dropped << " tx_errors: " << tx_errors << " tx_packets: " << tx_packets << endl
-         << endl;
-    sleep(2);
 }
 
 static void signalHandler(int sig)
@@ -228,4 +133,15 @@ static void signalHandler(int sig)
     default:
         cout << "intfMonitor: undefined signal" << endl;
     }
+}
+
+void setInterfaceUp(string interfaceName, int sockfd)
+{
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof ifr);
+    strncpy(ifr.ifr_name, interfaceName.c_str(), IFNAMSIZ);
+    ifr.ifr_flags |= IFF_UP;
+    int ret = ioctl(sockfd, SIOCGIFFLAGS, &ifr);
+    cout << "IOCTL returns: " << ret << endl;
+    close(sockfd);
 }
