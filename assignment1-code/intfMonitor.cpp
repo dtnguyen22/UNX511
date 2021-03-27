@@ -10,10 +10,17 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include "Interface.h"
+#include "Interface.h"//contains interface stats
+
 //print interface stats
 static void signalHandler(int sig);
-void setInterfaceUp(string interfaceName, int sockfd);
+
+//use ioctl to bring the interface up
+int set_if_up(char *ifname, short flags);
+int set_if_flags(char *ifname, short flags);
+
+//
+void writeMessage(int fd, string message);
 
 
 using namespace std;
@@ -44,11 +51,12 @@ int main(int argc, char *argv[])
     char buf[BUF_LEN];
     int len, ret;
     int fd, rc;
+    #ifdef DEBUG
     cout << "intfMonitor (" << getpid() << ") is running..." << endl;
+    #endif
     memset(&addr, 0, sizeof(addr));
     //Create the socket
-    if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
-    {
+    if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
         cout << "intfMonitor (" << getpid() << "): " << strerror(errno) << endl;
         exit(-1);
     }
@@ -64,33 +72,24 @@ int main(int argc, char *argv[])
     }
     /////////////////////////////////////////////////////////////////////////
 
-    len = sprintf(buf, "%s", "Ready"); //tell networkMonitor its ready to print stats
-    ret = write(fd, buf, BUF_LEN);
-    if (ret > 0)
-    {
-        cout << getpid() << " intfMonitor: ready is sent" << endl;
-    }
+    /////////////////////////////////////
+    //non blocking using timeout
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+    ///////////////////////////
+
+    writeMessage(fd, "Ready");//tells the networkMonitor it is ready
+
     memset(buf, 0, sizeof(buf)); //clean buf
-    ret = read(fd, buf, BUF_LEN);
+    ret = read(fd, buf, BUF_LEN);//receives message from network monitor
     if (strcmp(buf, "Monitor") == 0)
     {
-        memset(buf, 0, sizeof(buf));            //clean buf
-        len = sprintf(buf, "%s", "Monitoring"); //tell networkMonitor its ready to print stats
-        write(fd, buf, BUF_LEN);
+        writeMessage(fd, "Monitoring");//sends Monitoring to networkMonito
         isRunning = true;
-        if (ret > 0)
-        {
-            cout << getpid() << " intfMonitor: Monitoring is sent" << endl;
-        }
-        /////////////////////////////////////
-        //non blocking using timeout
-        struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
-        ///////////////////////////
-
         Interface interfaceObject; //contains interface information
+        interfaceObject.name = interface;
         while (isRunning)
         {
             //prints interface stats
@@ -98,29 +97,38 @@ int main(int argc, char *argv[])
             //checks if interface is down
             if (interfaceObject.operstate.compare("down") == 0)
             {
-                memset(buf, 0, sizeof(buf));           //clean buf
-                len = sprintf(buf, "%s", "Link Down"); //send to network
-                ret = write(fd, buf, BUF_LEN);
-                if (ret > 0)
-                {
-                    cout << getpid() << " intfMonitor: Link Down is sent" << endl;
-                }
+                writeMessage(fd, "Link Down");//tells networkMonitor the interface is down
                 //checks if the server asks intfMonitor to turn it up
                 memset(buf, 0, sizeof(buf)); //clean buf
                 ret = read(fd, buf, BUF_LEN);
-                if (strcmp(buf, "Set Link Up") == 0)
-                { //xecute an IOCTL command to set the link back up
+                if (strcmp(buf, "Set Link Up") == 0){ 
                     cout << "intfMonitor: Set Link Up is received" << endl;
-                    setInterfaceUp(interface, fd);
+                    //xecute an IOCTL command to set the link back up
+                    set_if_up(interface, 1);
                 }
             }
         }
     }
 
     cout << "intfMonitor: close(fd) before exitting" << endl;
-    close(fd);
+    close(fd);//close fd socket
+    unlink(socket_path);//remove the socket file
     return 0;
 }
+
+void writeMessage(int fd, string message){
+    char buf[512];
+    int len, ret;
+    memset(buf, 0, sizeof(buf));//clean buf
+    len = sprintf(buf, "%s", message.c_str()); //send to network
+    ret = write(fd, buf, BUF_LEN);
+    #ifdef DEBUG
+    if (ret > 0){
+        cout << getpid() << " intfMonitor: "<<message<<" is sent" << endl;
+    }
+    #endif
+}
+
 
 static void signalHandler(int sig)
 {
@@ -135,13 +143,35 @@ static void signalHandler(int sig)
     }
 }
 
-void setInterfaceUp(string interfaceName, int sockfd)
+int set_if_flags(char *ifname, short flags)
 {
+    int skfd = -1;      /* AF_INET socket for ioctl() calls.*/
     struct ifreq ifr;
-    memset(&ifr, 0, sizeof ifr);
-    strncpy(ifr.ifr_name, interfaceName.c_str(), IFNAMSIZ);
-    ifr.ifr_flags |= IFF_UP;
-    int ret = ioctl(sockfd, SIOCGIFFLAGS, &ifr);
-    cout << "IOCTL returns: " << ret << endl;
-    close(sockfd);
+    int res = 0;
+
+    ifr.ifr_flags = flags;
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    if ((skfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        printf("socket error %s\n", strerror(errno));
+        res = 1;
+        goto out;
+    }
+
+    res = ioctl(skfd, SIOCSIFFLAGS, &ifr);
+    #ifdef DEBUG
+    if (res < 0) {
+        printf("Interface '%s': Error: SIOCSIFFLAGS failed: %s\n",
+            ifname, strerror(errno));
+    } else {
+        printf("Interface '%s': flags set to %04X.\n", ifname, flags);
+    }
+    #endif
+out:
+    close(skfd);
+    return res;
+}
+int set_if_up(char *ifname, short flags)
+{
+    return set_if_flags(ifname, flags | IFF_UP);
 }

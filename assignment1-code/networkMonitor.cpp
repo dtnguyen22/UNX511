@@ -1,7 +1,3 @@
-//server.cpp - Server code for multiple connections
-//
-// 06-Mar-20  M. Watler         Created.
-
 #include <iostream>
 #include <signal.h>
 #include <string.h>
@@ -24,11 +20,10 @@ bool is_running;
 //for child process management
 pid_t childPid[2];
 
-char *intf[] = {"lo", "ens33"};
 
 int main(int argc, char *argv[])
 {
-    //Create the socket for inter-process communications
+    //Create the socket 
     struct sockaddr_un addr;
     char buf[BUF_LEN];
     int len;
@@ -40,37 +35,53 @@ int main(int argc, char *argv[])
 
     //////////////////////////////////////////////////////////////////
     //Set up a signal handler to terminate the program gracefully
-    // struct sigaction action;
-    // action.sa_handler = signalHandler;
-    // sigemptyset(&action.sa_mask);
-    // action.sa_flags = 0;
-    // int err1 = sigaction(SIGINT, &action, NULL);//sigaction return 0 on success
-    // int err2 = sigaction(SIGTSTP, &action, NULL);
-    // if((err1 + err2) != 0){ //sigaction return 0 on success
-    // 	cout << "Sigaction registration failed" << endl;
-    // }
+    struct sigaction action;
+    action.sa_handler = signalHandler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    int err1 = sigaction(SIGINT, &action, NULL);//sigaction return 0 on success
+    int err2 = sigaction(SIGTSTP, &action, NULL);
+    if((err1 + err2) != 0){ //sigaction return 0 on success
+    	cout << "Sigaction registration failed" << endl;
+    }
     ///////////////////////////////////////////////////////////////////
+    //gets interface names from user input
+    vector<string> interfaceName;
+    string ifName = "";
+    while(true){
+        cout << "Enter the interface name (0 to finish): ";
+        cin >> ifName;
+        if(ifName.compare("0") != 0){
+            interfaceName.push_back(ifName);
+        }else{
+            break;
+        }
+    }
 
+    ///////////////////////////////////
+    //spawns childs process which is intfMonitor
     bool isParent = true;
-    cout << endl
-         << "Spawning intfMoniter processes" << endl;
-    for (int i = 0; i < 2 & isParent; ++i)
-    {
+    #ifdef DEBUG
+    cout << endl << "Spawning intfMoniter processes" << endl;
+    #endif
+    for (int i = 0; i < interfaceName.size() & isParent; ++i){
+        sleep(0.5);//tries to avoid output collision
         childPid[i] = fork();
-        if (childPid[i] == 0)
-        { //the child
-            cout << "child:main: pid:" << getpid() << endl;
+        if (childPid[i] == 0){ //child pid list
+        #ifdef DEBUG
+            cout << "child pid:" << getpid() << endl;
+        #endif
             isParent = false;
-            execlp("./intfMonitor", "./intfMonitor", intf[i], NULL);
+            execlp("./intfMonitor", "./intfMonitor", interfaceName[i].c_str(), NULL);
             cout << "child:main: pid:" << getpid() << " I should not get here!" << endl;
             cout << strerror(errno) << endl;
         }
     }
+
     //Create the socket
     memset(&addr, 0, sizeof(addr));
-    if ((master_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
-    {
-        cout << "server: " << strerror(errno) << endl;
+    if ((master_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
+        cout << "networkMonitor create socket: " << strerror(errno) << endl;
         exit(-1);
     }
 
@@ -80,18 +91,18 @@ int main(int argc, char *argv[])
     unlink(socket_path);
 
     //Bind the socket to this local socket file
-    if (bind(master_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
-    {
-        cout << "server: " << strerror(errno) << endl;
+    if (bind(master_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1){
+        cout << "networkMonitor bind: " << strerror(errno) << endl;
         close(master_fd);
         exit(-1);
     }
-
+    #ifdef DEBUG
     cout << "Waiting for the client..." << endl;
+    #endif
     //Listen for a client to connect to this local socket file
     if (listen(master_fd, 5) == -1)
     {
-        cout << "server: " << strerror(errno) << endl;
+        cout << "networkMonitor listen: " << strerror(errno) << endl;
         unlink(socket_path);
         close(master_fd);
         exit(-1);
@@ -111,7 +122,7 @@ int main(int argc, char *argv[])
         ret = select(max_fd + 1, &read_fd_set, NULL, NULL, NULL); //Select from up to max_fd+1 sockets
         if (ret < 0)
         {
-            cout << "server: " << strerror(errno) << endl;
+            cout << "networkMonitor select: " << strerror(errno) << endl;
         }
         else
         { //Service all the sockets with input pending
@@ -124,12 +135,16 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
+                    #ifdef DEBUG
                     cout << "Server: incoming connection " << cl[numClients] << endl;
+                    #endif
                     FD_SET(cl[numClients], &active_fd_set); //Add the new connection to the set
                     memset(buf, 0, sizeof(buf));//clean buf
                     ret = read(cl[numClients], buf, BUF_LEN); //Read the data from that client
                     if(strcmp(buf, "Ready") == 0){ //0 means they are equal
+                        #ifdef DEBUG
                         cout << "networkMonitor: received Ready" <<endl;
+                        #endif
                         memset(buf, 0, sizeof(buf));//clean buf
                         len = sprintf(buf, "%s", "Monitor"); //tell intfMonitor networkMonitor is ready
                         ret = write(cl[numClients], buf, len);
@@ -153,10 +168,14 @@ int main(int argc, char *argv[])
                         memset(buf, 0, sizeof(buf));//clean buf
                         ret = read(cl[i], buf, BUF_LEN); //Read the data from that client
                         if(strcmp(buf, "Monitoring") == 0){ //0 means they are equal
-                            cout << "Monitoring status received" << endl;                          
+                        #ifdef DEBUG
+                            cout << "Monitoring status received" << endl;
+                        #endif                          
                         }
                         if(strcmp(buf, "Link Down") == 0){
+                            #ifdef DEBUG
                             cout << "Link Down status received" << endl;
+                            #endif
                             memset(buf, 0, sizeof(buf));//clean buf
                             len = sprintf(buf, "%s", "Set Link Up"); 
                             ret = write(cl[i], buf, BUF_LEN);
@@ -172,19 +191,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    for (int i = 0; i < numClients; ++i)
-    { //Request each client to quit
-        cout << "server: request client " << i + 1 << " to quit" << endl;
-        len = sprintf(buf, "Quit") + 1;
-        ret = write(cl[i], buf, len);
-        if (ret == -1)
-        {
-            cout << "server: Write Error" << endl;
-            cout << strerror(errno) << endl;
-        }
-        sleep(1);                      //Give the clients a change to quit
+    for (int i = 0; i < numClients; ++i){ //Give the clients a change to quit
         FD_CLR(cl[i], &active_fd_set); //Remove the socket from the set of active sockets
-        close(cl[i]);                  //Close the socket connection
+        close(cl[i]);//Close the socket connection
     }
 
     //Close the master socket
@@ -196,15 +205,12 @@ int main(int argc, char *argv[])
 
 static void signalHandler(int sig)
 {
-    cout << "networkMonitor: signalHandler(" << sig << "): SIGINT" << endl;
-    switch (sig)
-    {
+    switch (sig){
     case SIGINT:
         is_running=false;
         cout << "networkMonitor: signalHandler(" << sig << "): SIGINT" << endl;
-        for (int i = 0; i < 2; i++)
-        {
-            kill(childPid[i], SIGINT);
+        for (int i = 0; i < 2; i++){
+            kill(childPid[i], SIGINT);//sends sigint to intfmonitor
         }
         break;
     default:

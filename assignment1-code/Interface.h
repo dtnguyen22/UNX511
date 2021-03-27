@@ -9,6 +9,7 @@ using namespace std;
 
 class Interface{
 public:
+    string name;
     string operstate;           //the operating state
     int carrier_up_count = 0;   //no of times the intf has been up
     int carrier_down_count = 0; //no of times the intf has been down
